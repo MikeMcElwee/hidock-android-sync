@@ -1,5 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Enable cron + boot autostart + wake-lock. Idempotent.
+# DEPRECATED. Cron + Termux:Boot does not reliably resume after a real
+# reboot on OneUI. The supported path is Android JobScheduler:
+#
+#   bash setup-jobscheduler.sh
+#
+# This script is kept so existing installs can still inspect the old
+# cron path. Prefer setup-jobscheduler.sh for any new or repaired phone.
 set -euo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -7,6 +13,11 @@ CONF="$HOME/.config/hidock-sync/config"
 [ -f "$CONF" ] || { echo "config missing at $CONF — run setup.sh first"; exit 2; }
 . "$CONF"
 INTERVAL=${CRON_INTERVAL_MIN:-30}
+
+echo "WARNING: setup-cron.sh is deprecated."
+echo "         Termux:Boot + crond did not reliably resume after reboot."
+echo "         Supported path: bash $HERE/setup-jobscheduler.sh"
+echo
 
 # 1) Boot script: starts crond and grabs a wake-lock when the phone boots.
 mkdir -p "$HOME/.termux/boot"
@@ -41,11 +52,13 @@ echo "wake-lock acquired (Termux notification will show)"
 
 cat <<EOM
 
-Done. Schedule: every ${INTERVAL} min.
+DEPRECATED schedule installed: every ${INTERVAL} min via crond.
+   Prefer: bash $HERE/setup-jobscheduler.sh
    tail -f ${LOG_DIR}/cron_ticks.log
    tail -f ${LOG_DIR}/sync.log
 
-Reminder — to make this survive a reboot:
-  * Tap the Termux:Boot app icon ONCE (it registers BOOT_COMPLETED).
-  * Settings → Apps → Termux / Termux:API / Termux:Boot → Battery → Unrestricted.
+Reminder — cron did not reliably survive a real reboot:
+  * The supported path is persisted JobScheduler (setup-jobscheduler.sh).
+  * If you still use this fallback: tap Termux:Boot once, and set
+    Termux / Termux:API / Termux:Boot → Battery → Unrestricted.
 EOM

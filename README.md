@@ -2,7 +2,7 @@
 
 Pull recordings off a **HiDock P1 mini** voice recorder via your Android phone over USB,
 transcode them to `.m4a`, upload to **Google Drive**, and delete from the device — all
-fully automatic, on a cron schedule, with no PC needed.
+fully automatic, on a persisted Android JobScheduler interval, with no PC needed.
 
 The HiDock device speaks a proprietary "Jensen" USB protocol and only enumerates when
 plugged into a phone-class USB host (it won't talk to a Mac/PC directly). This script
@@ -13,7 +13,7 @@ hands to [pyusb](https://github.com/pyusb/pyusb), so we never need root.
 
 The Jensen protocol implementation is consumed unmodified from
 [`sgeraldes/hidock-next`](https://github.com/sgeraldes/hidock-next) (MIT licensed) — this
-repo is a thin Termux/Android adapter on top of it, plus a cron-friendly Drive uploader.
+repo is a thin Termux/Android adapter on top of it, plus a JobScheduler-driven Drive uploader.
 
 ## What it does on each tick
 
@@ -46,7 +46,7 @@ Every file lands in Drive at:
 | | |
 |---|---|
 | Hardware | Android phone with USB-C OTG, HiDock P1 mini (VID `0x3887` PID `0x2041`) |
-| Apps | Termux + Termux:API + Termux:Boot (install **all three from F-Droid** or all three from the [Termux GitHub releases](https://github.com/termux) — they share signing keys; you cannot mix) |
+| Apps | Termux + Termux:API (install **both from F-Droid** or both from the [Termux GitHub releases](https://github.com/termux) — they share signing keys; you cannot mix). Termux:Boot is **optional insurance** only; persisted JobScheduler jobs are owned by Termux:API and should survive reboot without it. |
 | Account | A Google account with Drive |
 
 Tested on Samsung Galaxy Z Fold 3 (Android 14) with HiDock P1 mini firmware 2.2.3.
@@ -67,7 +67,9 @@ bash setup.sh
 
 `setup.sh` installs `python libusb termux-api ffmpeg rclone cronie termux-services`,
 `pip install pyusb`, and `git clone`s `sgeraldes/hidock-next` (read-only — we only
-import its `hidock_device.py` for the Jensen protocol).
+import its `hidock_device.py` for the Jensen protocol). `cronie` is only needed
+if you still run the deprecated `setup-cron.sh`; the supported scheduler is
+`termux-job-scheduler` from `termux-api`.
 
 ```bash
 # 2) Configure rclone Google Drive remote (interactive — opens a browser tab)
@@ -105,17 +107,69 @@ bash run_sync.sh --limit 1
 Open the Drive web UI and confirm the `.m4a` appeared at `{DRIVE_BASE}/YYYY-MM-DD/`.
 
 ```bash
-# 7) Enable cron + boot autostart
-bash setup-cron.sh
+# 7) Enable persisted JobScheduler (survives reboot; do not use cron)
+bash setup-jobscheduler.sh
 ```
+
+That installs Android JobScheduler job **834001** via `termux-job-scheduler`
+(`--persisted true`, `--battery-not-low false` so a low battery still syncs,
+`--network any`, period from `CRON_INTERVAL_MIN`, default 30 min → `1800000` ms).
+It also **clears crontab, stops crond**, and replaces `~/.termux/boot/start-crond`
+with a thin re-assert of that same job. Termux:Boot is optional insurance —
+persisted jobs should already fire after a cold boot without opening Termux.
+
+`setup-cron.sh` is **deprecated**. Termux:Boot + crond did not reliably resume
+after a real phone reboot.
 
 ## After install
 
 ```bash
 bash run_sync.sh                     # manual full sync
 tail -f ~/.config/hidock-sync/sync.log
-crontab -l                           # see schedule
+termux-job-scheduler -p              # list pending JobScheduler jobs
 ```
+
+### List / cancel the schedule
+
+```bash
+termux-job-scheduler -p
+# expect: Job 834001: …/job_fire.sh (periodic: 1800000ms) (persisted)
+#         — and NOT "(battery not low)" (we pass --battery-not-low false)
+
+termux-job-scheduler --cancel --job-id 834001
+# or: bash setup-jobscheduler.sh --cancel
+```
+
+Re-run `bash setup-jobscheduler.sh` to re-register the same job id (idempotent).
+
+### Cold-boot prove
+
+Do this once after install. The point is to prove JobScheduler fires **without**
+a Termux session (the failure mode of Termux:Boot + crond).
+
+1. Confirm the job is pending: `termux-job-scheduler -p` (job **834001**,
+   `(persisted)`, period matching `CRON_INTERVAL_MIN`).
+2. Optional snapshot so you can tell pre- vs post-reboot ticks:
+   ```bash
+   adb shell cat /sdcard/Download/hidock_job_ticks.txt
+   ```
+3. **Reboot the phone. Do not open Termux, Termux:API, or Termux:Boot.**
+4. Wait at least one period (default 30 min; Android may add a few minutes of
+   flex). Then, from a PC:
+   ```bash
+   adb shell cat /sdcard/Download/hidock_job_ticks.txt
+   ```
+   A new `JOB_FIRE …` line whose timestamp (and `boot_id=`) is after the reboot
+   proves the job ran without anyone opening Termux.
+5. Confirm Android still has the persisted job owned by Termux:API:
+   ```bash
+   adb shell dumpsys jobscheduler | grep -A 40 'com.termux.api'
+   ```
+   Look for job id **834001** and a persisted `JobSchedulerAPI$JobSchedulerService`
+   entry. `grep 834001` on that dump is usually enough.
+6. If there is no post-reboot tick: Settings → Apps → **Termux:API** and
+   **Termux** → Battery → **Unrestricted**, re-run `bash setup-jobscheduler.sh`,
+   and repeat the reboot. Do not "fix" this by going back to `setup-cron.sh`.
 
 ## Configuration
 
@@ -126,14 +180,14 @@ DRIVE_REMOTE=gdrive                  # name of your rclone remote
 DRIVE_BASE=HiDock/Documents          # path inside the Drive
 STAGING_DIR=/sdcard/Download/hidock_staging
 LOG_DIR=$HOME/.config/hidock-sync
-CRON_INTERVAL_MIN=30                 # only used by setup-cron.sh
+CRON_INTERVAL_MIN=30                 # setup-jobscheduler.sh → --period-ms (min 15)
 ```
 
 ---
 
 ## Troubleshooting
 
-### "no USB device attached, skipping" in the cron log
+### "no USB device attached, skipping" in the tick log
 Plug in HiDock and reseat. `termux-usb -l` should print the `/dev/bus/usb/X/Y` path.
 
 ### "Permission denied" from `termux-usb`
@@ -147,25 +201,33 @@ options:
 1. **Recommended:** uninstall HiNotes — you don't need it once this script is running.
 2. Make Termux:API the default handler for the HiDock USB device (Settings → Apps →
    Default apps → USB device assistance → HiDock P1 mini → Termux:API).
-3. Force-stop HiNotes manually before each cron tick (not feasible for unattended use
-   without root or `adb`).
+3. Force-stop HiNotes manually before each scheduled tick (not feasible for unattended
+   use without root or `adb`).
 
-### Phone goes to sleep, cron stops firing
-- `setup-cron.sh` calls `termux-wake-lock`. If you see no Termux notification, wake-lock
-  is not held.
+### Phone goes to sleep, jobs stop firing
+JobScheduler is supposed to wake the device; it does **not** need a permanent
+`termux-wake-lock` the way crond did.
 - Settings → Apps → Termux → Battery → **Unrestricted** (Samsung) or **Don't optimize**.
-- Same for Termux:API and Termux:Boot.
+- Same for **Termux:API** (it owns the persisted job).
+- Termux:Boot is optional; if you installed it, Unrestricted is still wise.
 
-### Cron doesn't fire after reboot
-Termux:Boot must be **opened at least once** after install (it then registers the
-`BOOT_COMPLETED` receiver). If you've never tapped its icon, do so. To verify the boot
-script will run, check `~/.termux/boot/start-crond` exists and is executable.
+### Job does not fire after reboot
+This is the failure we moved off crond to fix. Persisted jobs live in Android's
+JobScheduler under `com.termux.api`, not in a Termux session.
+
+- `termux-job-scheduler -p` should still list job **834001** after you open Termux.
+- `adb shell cat /sdcard/Download/hidock_job_ticks.txt` should gain a `JOB_FIRE`
+  line after the next period — **without** opening Termux.
+- `adb shell dumpsys jobscheduler` should show `com.termux.api` job **834001**.
+- If the job vanished: battery restrictions likely killed Termux:API. Set it
+  Unrestricted and re-run `bash setup-jobscheduler.sh`.
+- Do not treat Termux:Boot + `setup-cron.sh` as the fix. That path is deprecated.
 
 ### Tokens / re-auth
 `rclone` saves OAuth refresh tokens in `~/.config/rclone/rclone.conf`. If Drive
 returns 401, run `rclone config reconnect gdrive:` and re-auth.
 
-### Mid-record cron tick / live file skip
+### Mid-record scheduled tick / live file skip
 Each tick asks Jensen `get_recording_file` (CMD_GET_RECORDING_FILE) for the
 in-progress filename and **skips that file** — no pull, transcode, upload, or
 delete. `--dry-run` still prints the skip decision.
@@ -182,20 +244,23 @@ see a different name and can sync the previous one).
 
 ## How it works
 
-1. **`run_sync.sh`** discovers the HiDock USB device with `termux-usb -l`, then runs
+1. **`job_fire.sh`** is the JobScheduler entrypoint (job 834001). It writes a
+   `JOB_FIRE` line to `/sdcard/Download/hidock_job_ticks.txt` (adb-readable)
+   and execs `run_sync.sh`.
+2. **`run_sync.sh`** discovers the HiDock USB device with `termux-usb -l`, then runs
    the sync script as a child of `termux-usb -e`. Termux:API opens the device through
    `UsbManager.openDevice()` and passes the resulting file descriptor to our process.
-2. **`hidock_sync.py`** parses that fd, calls
+3. **`hidock_sync.py`** parses that fd, calls
    [`libusb_wrap_sys_device`](https://libusb.sourceforge.io/api-1.0/group__libusb__dev.html#ga98f0967e6e72b327fae6c8b0d51fbcd2)
    via ctypes, and constructs a fully-functional `usb.core.Device`. A small
    monkey-patch on `backend.open_device` keeps pyusb from re-opening the (already
    open) handle.
-3. **`HiDockJensen`** from `sgeraldes/hidock-next` is then driven directly: list files,
+4. **`HiDockJensen`** from `sgeraldes/hidock-next` is then driven directly: list files,
    skip the live/last file reported by `get_recording_file` (if any), stream-pull
    each remaining file, and `delete_file` on success.
-4. Each pulled `.hda` is transcoded to `.m4a` (AAC 64 kbps mono) with `ffmpeg`, then
+5. Each pulled `.hda` is transcoded to `.m4a` (AAC 64 kbps mono) with `ffmpeg`, then
    `rclone copyto`'d to Drive with `--ignore-existing` (idempotent).
-5. `delete_file` on the device runs **only after** the Drive copy returns 200, so a
+6. `delete_file` on the device runs **only after** the Drive copy returns 200, so a
    network failure never destroys data.
 
 ## Repo layout
@@ -206,9 +271,12 @@ hidock-android-sync/
 ├── config.example.env       # default config; user copies to ~/.config/hidock-sync/config
 ├── hidock_sync.py           # main worker, run via `termux-usb -e`
 ├── test_live_skip.py        # unit tests for mid-record skip (no USB needed)
-├── run_sync.sh              # cron-friendly wrapper
+├── test_jobscheduler_setup.sh # offline tests for JobScheduler setup + wrapper
+├── run_sync.sh              # scheduler-friendly ingest wrapper
+├── job_fire.sh              # JobScheduler entrypoint (JOB_FIRE + run_sync.sh)
 ├── setup.sh                 # one-shot installer (pkg install + clone hidock-next)
-└── setup-cron.sh            # enables cron + boot autostart + wake-lock
+├── setup-jobscheduler.sh    # supported: persisted JobScheduler job 834001
+└── setup-cron.sh            # DEPRECATED cron + Termux:Boot fallback
 ```
 
 ## Credits

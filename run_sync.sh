@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Cron-friendly wrapper that:
+# Scheduler-friendly wrapper that:
 #   1) discovers the HiDock USB device path
 #   2) on first ever invocation with `request`, asks Android for permission
 #   3) on every other invocation, runs hidock_sync.py inside `termux-usb -e`
