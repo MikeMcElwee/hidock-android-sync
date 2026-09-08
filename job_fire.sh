@@ -7,6 +7,8 @@ set -u
 HERE="$(dirname "$(readlink -f "$0")")"
 HIDOCK_JOB_ID=834001
 TICK_FILE="${JOB_TICK_FILE:-/sdcard/Download/hidock_job_ticks.txt}"
+# So run_sync.sh appends USB_PERM_DENIED to the same adb-readable tick file.
+export JOB_TICK_FILE="$TICK_FILE"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S %z')"
 BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
 JOB_LINE="JOB_FIRE ts=${STAMP} job-id=${HIDOCK_JOB_ID} pid=$$ boot_id=${BOOT_ID}"

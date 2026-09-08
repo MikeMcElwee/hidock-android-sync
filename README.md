@@ -162,11 +162,12 @@ a Termux session (the failure mode of Termux:Boot + crond).
    A new `JOB_FIRE …` line whose timestamp (and `boot_id=`) is after the reboot
    proves the job ran without anyone opening Termux.
 5. After `JOB_FIRE` is proved, check that same tick's sync log
-   (`~/.config/hidock-sync/cron_ticks.log`). If it logged
-   `no USB device attached, skipping` or `Permission denied`, plug the HiDock
-   and grant USB once (`bash run_sync.sh request`, or `termux-usb -r` on the
-   `/dev/bus/usb/X/Y` path) and tap **OK**. JobScheduler itself is fine;
-   Android wiped the USB grant on cold boot. See
+   (`~/.config/hidock-sync/cron_ticks.log`). JobScheduler itself is fine.
+   Android still wipes the USB grant on cold boot, so the first post-reboot
+   tick may auto-run `termux-usb -r` and show the system dialog. Tap **OK**.
+   If the dialog is missed, look for `USB_PERM_DENIED` in
+   `/sdcard/Download/hidock_job_ticks.txt` and a **HiDock needs USB OK**
+   notification. Unplug/replug can also re-trigger attach flows. See
    [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
 6. Confirm Android still has the persisted job owned by Termux:API:
    ```bash
@@ -200,21 +201,15 @@ After a cold boot this can also be a wiped USB grant even though the dock is
 plugged in — see [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
 
 ### "Permission denied" from `termux-usb`
-You haven't granted the USB permission yet (or Android wiped it after a cold
-boot). Run `bash run_sync.sh request` once — Android will pop an "Allow
-Termux:API to access HiDock P1 mini?" dialog. Tap **OK**. The grant is per
-device. It does **not** survive a cold boot — see
-[USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
+Android has not granted Termux:API (`com.termux.api`) access to this USB
+device, or it wiped that grant after a cold boot. `run_sync.sh` now detects
+that from `termux-usb -e`, runs `termux-usb -r "$DEV"` once, and retries
+`-e`. Tap **OK** on the dialog. If the retry is still denied, the wrapper
+exits non-zero, writes `USB_PERM_DENIED` to the tick logs, and fires a
+**HiDock needs USB OK** notification. This is **not** an OS-level persist —
+see [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
 
-### USB permission wiped after cold boot
-Phone-proved: JobScheduler job **834001** survives reboot and fires
-(`JOB_FIRE` in `/sdcard/Download/hidock_job_ticks.txt`). JobScheduler itself
-is fine.
-
-Android wipes Termux:API's `termux-usb` device permission after a cold boot.
-Until you grant it again, the job still runs but ingest skips with
-`no USB device attached, skipping` or `Permission denied` from `termux-usb`.
-Hands-off ingest after reboot still needs one interactive grant per boot:
+You can still grant manually:
 
 ```bash
 bash run_sync.sh request
@@ -222,12 +217,35 @@ bash run_sync.sh request
 termux-usb -r /dev/bus/usb/X/Y
 ```
 
-Tap **OK** on the system dialog (HiDock must be plugged in). Same flow as
-["Permission denied" from `termux-usb`](#permission-denied-from-termux-usb).
+### USB permission wiped after cold boot
+Phone-proved: JobScheduler job **834001** survives reboot and fires
+(`JOB_FIRE` in `/sdcard/Download/hidock_job_ticks.txt`). JobScheduler itself
+is fine.
 
-There is no automatic persist yet. Do not treat a re-scheduled JobScheduler
-job as a USB grant, and do not expect `termux-usb -r` to stay granted across
-a cold boot.
+**Android limitation (not a JobScheduler bug):** USB host permissions do not
+persist across reboot for third-party apps unless the **same package that
+opens the device** (`com.termux.api`) has a `USB_DEVICE_ATTACHED`
+device-filter and a remembered grant. Stock Termux:API has no HiDock
+device-filter. `adb` cannot grant this.
+
+Until you tap **OK** again, the job still runs but `termux-usb -e` returns
+`Permission denied` (or the tick logs `no USB device attached, skipping`).
+`run_sync.sh` mitigates by auto-requesting once and notifying; it does
+**not** survive the next cold boot on its own.
+
+Unplug/replug after reboot can also re-trigger Android USB attach flows
+(and another permission dialog).
+
+True hands-off ingest after reboot is **future work**, out of scope here:
+
+- an Accessibility service that auto-taps the USB OK dialog, or
+- a custom Termux:API build with a `device_filter` for vendor-id `0x3887`
+  product-id `0x2041` (HiDock P1 mini) plus `directBootAware` so the grant
+  can attach before first unlock.
+
+Do not treat a persisted JobScheduler job as a USB grant. The supported
+scheduler is still JobScheduler (`setup-jobscheduler.sh`); cron is
+deprecated.
 
 ### HiNotes app holds the device, sync fails
 The HiNotes app auto-attaches to the HiDock on USB-attach and locks it. You have three
@@ -284,6 +302,10 @@ see a different name and can sync the previous one).
 2. **`run_sync.sh`** discovers the HiDock USB device with `termux-usb -l`, then runs
    the sync script as a child of `termux-usb -e`. Termux:API opens the device through
    `UsbManager.openDevice()` and passes the resulting file descriptor to our process.
+   If `-e` fails with permission denied (typical after a cold boot), the wrapper
+   auto-runs `termux-usb -r` and retries once. Still denied → `USB_PERM_DENIED`
+   on the tick logs plus a **HiDock needs USB OK** notification. This does not
+   persist the grant across reboot.
 3. **`hidock_sync.py`** parses that fd, calls
    [`libusb_wrap_sys_device`](https://libusb.sourceforge.io/api-1.0/group__libusb__dev.html#ga98f0967e6e72b327fae6c8b0d51fbcd2)
    via ctypes, and constructs a fully-functional `usb.core.Device`. A small
@@ -306,6 +328,7 @@ hidock-android-sync/
 ├── hidock_sync.py           # main worker, run via `termux-usb -e`
 ├── test_live_skip.py        # unit tests for mid-record skip (no USB needed)
 ├── test_jobscheduler_setup.sh # offline tests for JobScheduler setup + wrapper
+├── test_usb_perm.sh         # offline tests for USB perm auto-request + notify
 ├── run_sync.sh              # scheduler-friendly ingest wrapper
 ├── job_fire.sh              # JobScheduler entrypoint (JOB_FIRE + run_sync.sh)
 ├── job_run_sync.sh          # thin alias → job_fire.sh (phone checkouts that registered this name)

@@ -32,6 +32,6 @@ echo
 echo "==> Done. Next steps:"
 echo "    1. rclone config create gdrive drive scope drive   # OAuth in browser"
 echo "    2. Plug in the HiDock"
-echo "    3. bash run_sync.sh request                         # grant USB permission once"
+echo "    3. bash run_sync.sh request                         # grant USB (again after each reboot)"
 echo "    4. bash run_sync.sh --dry-run --limit 3             # see what would happen"
 echo "    5. bash setup-jobscheduler.sh                       # persisted JobScheduler (not cron)"
