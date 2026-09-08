@@ -165,6 +165,19 @@ script will run, check `~/.termux/boot/start-crond` exists and is executable.
 `rclone` saves OAuth refresh tokens in `~/.config/rclone/rclone.conf`. If Drive
 returns 401, run `rclone config reconnect gdrive:` and re-auth.
 
+### Mid-record cron tick / live file skip
+Each tick asks Jensen `get_recording_file` (CMD_GET_RECORDING_FILE) for the
+in-progress filename and **skips that file** — no pull, transcode, upload, or
+delete. `--dry-run` still prints the skip decision.
+
+If that call raises, returns nothing, or returns an empty name, sync runs over
+the full file list as before (fail-open so a flaky query cannot stall the queue).
+
+**Caveat:** Jensen documents this API as the *active or last* recording. If
+firmware reports the last completed file while the device is idle, that file
+stays on the device until a new recording starts (the next tick after that will
+see a different name and can sync the previous one).
+
 ---
 
 ## How it works
@@ -178,7 +191,8 @@ returns 401, run `rclone config reconnect gdrive:` and re-auth.
    monkey-patch on `backend.open_device` keeps pyusb from re-opening the (already
    open) handle.
 3. **`HiDockJensen`** from `sgeraldes/hidock-next` is then driven directly: list files,
-   stream-pull each one, and `delete_file` on success.
+   skip the live/last file reported by `get_recording_file` (if any), stream-pull
+   each remaining file, and `delete_file` on success.
 4. Each pulled `.hda` is transcoded to `.m4a` (AAC 64 kbps mono) with `ffmpeg`, then
    `rclone copyto`'d to Drive with `--ignore-existing` (idempotent).
 5. `delete_file` on the device runs **only after** the Drive copy returns 200, so a
@@ -191,6 +205,7 @@ hidock-android-sync/
 ├── LICENSE
 ├── config.example.env       # default config; user copies to ~/.config/hidock-sync/config
 ├── hidock_sync.py           # main worker, run via `termux-usb -e`
+├── test_live_skip.py        # unit tests for mid-record skip (no USB needed)
 ├── run_sync.sh              # cron-friendly wrapper
 ├── setup.sh                 # one-shot installer (pkg install + clone hidock-next)
 └── setup-cron.sh            # enables cron + boot autostart + wake-lock

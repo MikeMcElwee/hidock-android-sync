@@ -79,6 +79,34 @@ def now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 def log(msg): print(f"[{now()}] {msg}", flush=True)
 
 
+def resolve_live_skip_name(active):
+    """Basename to skip this tick, or None (fail-open) if unavailable/empty."""
+    if not isinstance(active, dict):
+        return None
+    name = active.get("name")
+    if name is None:
+        return None
+    name = str(name).strip()
+    if not name:
+        return None
+    return Path(name).name
+
+
+def query_live_skip_name(jensen, timeout_s=5):
+    """Ask Jensen CMD_GET_RECORDING_FILE. None on raise / empty (fail-open)."""
+    try:
+        active = jensen.get_recording_file(timeout_s=timeout_s)
+    except Exception:
+        return None
+    return resolve_live_skip_name(active)
+
+
+def is_live_skip(name, skip_name):
+    if not skip_name or not name:
+        return False
+    return name == skip_name or Path(name).name == skip_name
+
+
 def parse_name(name):
     m = NAME_RE.match(name)
     if not m: return None
@@ -238,6 +266,14 @@ def main():
     files = jensen.list_files(timeout_s=60).get("files", [])
     log(f"{len(files)} files on device, {fmt_size(sum(f.get('length', 0) for f in files))} total")
 
+    # Mid-record protection: skip the live take so a cron tick cannot pull/delete it.
+    # Fail-open: if get_recording_file raises / returns None / empty name, sync the full list.
+    skip_name = query_live_skip_name(jensen, timeout_s=5)
+    if skip_name:
+        log(f"SKIP live/recording file this tick: {skip_name}")
+    else:
+        log("WARN get_recording_file unavailable/empty — not skipping any file")
+
     processed = 0
     skipped = 0
     failures = []
@@ -247,6 +283,10 @@ def main():
             log(f"limit {args.limit} reached, stopping")
             break
         name = f["name"]
+        if is_live_skip(name, skip_name):
+            log(f"[{idx}/{len(files)}] SKIP live/recording file: {name}")
+            skipped += 1
+            continue
         size = f["length"]
         parsed = parse_name(name)
         if not parsed:
