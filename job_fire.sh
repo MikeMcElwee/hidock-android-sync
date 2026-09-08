@@ -33,4 +33,14 @@ if [ ! -f "$HERE/run_sync.sh" ]; then
     echo "run_sync.sh missing next to $0" >&2
     exit 2
 fi
-exec "$HERE/run_sync.sh" "$@"
+# Exec via bash so the Termux shebang on run_sync.sh is not required
+# (offline tests, and JobScheduler already launched us under Termux bash).
+BASH_BIN="/data/data/com.termux/files/usr/bin/bash"
+if [ ! -x "$BASH_BIN" ]; then
+    BASH_BIN="$(command -v bash || true)"
+fi
+if [ -z "$BASH_BIN" ]; then
+    echo "bash not found; cannot exec run_sync.sh" >&2
+    exit 2
+fi
+exec "$BASH_BIN" "$HERE/run_sync.sh" "$@"

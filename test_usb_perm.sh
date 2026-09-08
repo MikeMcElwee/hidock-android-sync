@@ -14,6 +14,13 @@ assert() {
         echo "ok: $2"
     fi
 }
+count_lines() {
+    if [ -f "$1" ]; then
+        wc -l < "$1"
+    else
+        echo 0
+    fi
+}
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -99,7 +106,7 @@ echo ok > "$STATE/usb_mode"
 RC=0
 run_sync --dry-run || RC=$?
 assert "[ \"$RC\" -eq 0 ]" "success path exits 0"
-assert "[ \"\$(wc -l < \"$STATE/usb_e.count\")\" -eq 1 ]" "termux-usb -e once"
+assert "[ \"\$(count_lines \"$STATE/usb_e.count\")\" -eq 1 ]" "termux-usb -e once"
 assert "[ ! -f \"$STATE/usb_r.count\" ]" "termux-usb -r not called"
 assert "! grep -q USB_PERM_DENIED \"$TICK\"" "no USB_PERM_DENIED on success"
 assert "[ ! -s \"$STATE/notify.log\" ]" "no notification on success"
@@ -112,8 +119,8 @@ echo deny_once > "$STATE/usb_mode"
 RC=0
 run_sync --limit 1 || RC=$?
 assert "[ \"$RC\" -eq 0 ]" "denied-then-grant exits 0"
-assert "[ \"\$(wc -l < \"$STATE/usb_e.count\")\" -eq 2 ]" "termux-usb -e retried once"
-assert "[ \"\$(wc -l < \"$STATE/usb_r.count\")\" -eq 1 ]" "auto termux-usb -r once"
+assert "[ \"\$(count_lines \"$STATE/usb_e.count\")\" -eq 2 ]" "termux-usb -e retried once"
+assert "[ \"\$(count_lines \"$STATE/usb_r.count\")\" -eq 1 ]" "auto termux-usb -r once"
 assert "grep -q -- '-r /dev/bus/usb/001/002' \"$STATE/usb.log\"" " -r uses discovered device"
 assert "! grep -q USB_PERM_DENIED \"$TICK\"" "no USB_PERM_DENIED after successful retry"
 assert "grep -q -- '--title HiDock needs USB OK' \"$STATE/notify.log\"" "notify while requesting so the dialog is seen"
@@ -126,8 +133,8 @@ echo deny_always > "$STATE/usb_mode"
 RC=0
 run_sync --dry-run || RC=$?
 assert "[ \"$RC\" -eq 1 ]" "still-denied exits 1"
-assert "[ \"\$(wc -l < \"$STATE/usb_e.count\")\" -eq 2 ]" "exactly one retry (two -e calls)"
-assert "[ \"\$(wc -l < \"$STATE/usb_r.count\")\" -eq 1 ]" "exactly one auto -r"
+assert "[ \"\$(count_lines \"$STATE/usb_e.count\")\" -eq 2 ]" "exactly one retry (two -e calls)"
+assert "[ \"\$(count_lines \"$STATE/usb_r.count\")\" -eq 1 ]" "exactly one auto -r"
 assert "grep -q '^USB_PERM_DENIED ' \"$TICK\"" "USB_PERM_DENIED on adb tick file"
 assert "grep -q 'device=/dev/bus/usb/001/002' \"$TICK\"" "denied line names the device"
 assert "grep -q 'boot_id=' \"$TICK\"" "denied line includes boot_id"
@@ -144,7 +151,7 @@ echo busy > "$STATE/usb_mode"
 RC=0
 run_sync || RC=$?
 assert "[ \"$RC\" -eq 0 ]" "non-permission failure keeps prior exit-0 wrapper behavior"
-assert "[ \"\$(wc -l < \"$STATE/usb_e.count\")\" -eq 1 ]" "no retry on non-permission error"
+assert "[ \"\$(count_lines \"$STATE/usb_e.count\")\" -eq 1 ]" "no retry on non-permission error"
 assert "[ ! -f \"$STATE/usb_r.count\" ]" "no -r on device-busy"
 assert "! grep -q USB_PERM_DENIED \"$TICK\"" "no USB_PERM_DENIED on device-busy"
 assert "[ ! -s \"$STATE/notify.log\" ]" "no notification on device-busy"
@@ -158,7 +165,7 @@ RC=0
 run_sync request || RC=$?
 assert "[ \"$RC\" -eq 0 ]" "request exits 0"
 assert "[ ! -f \"$STATE/usb_e.count\" ]" "request does not open via -e"
-assert "[ \"\$(wc -l < \"$STATE/usb_r.count\")\" -eq 1 ]" "request calls -r once"
+assert "[ \"\$(count_lines \"$STATE/usb_r.count\")\" -eq 1 ]" "request calls -r once"
 assert "! grep -q USB_PERM_DENIED \"$TICK\"" "request does not write USB_PERM_DENIED"
 
 echo
@@ -195,7 +202,7 @@ assert "grep -q '^USB_PERM_DENIED ' \"$TICK\"" "USB_PERM_DENIED appended to same
 assert "grep -q '^JOB_FIRE ' \"$HOME_DIR/.config/hidock-sync/cron_ticks.log\"" "JOB_FIRE in cron_ticks.log"
 assert "grep -q '^USB_PERM_DENIED ' \"$HOME_DIR/.config/hidock-sync/cron_ticks.log\"" "USB_PERM_DENIED in cron_ticks.log"
 assert "grep -q -- '--title HiDock needs USB OK' \"$STATE/notify.log\"" "JobScheduler path notifies"
-assert "[ \"\$(wc -l < \"$STATE/usb_r.count\")\" -eq 1 ]" "JobScheduler path auto-requests once"
+assert "[ \"\$(count_lines \"$STATE/usb_r.count\")\" -eq 1 ]" "JobScheduler path auto-requests once"
 
 echo
 if [ "$FAILS" -ne 0 ]; then
