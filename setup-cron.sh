@@ -1,6 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# DEPRECATED. Use setup-jobscheduler.sh (Android JobScheduler job 834001).
+# Kept so older phones can migrate off cron/crond. Do not use for new installs.
 # Enable cron + boot autostart + wake-lock. Idempotent.
 set -euo pipefail
+echo "DEPRECATED: setup-cron.sh is kept for old-phone migration only."
+echo "           Prefer: bash setup-jobscheduler.sh  (JobScheduler job 834001)"
 
 HERE="$(dirname "$(readlink -f "$0")")"
 CONF="$HOME/.config/hidock-sync/config"
