@@ -168,7 +168,8 @@ a Termux session (the failure mode of Termux:Boot + crond).
    If the dialog is missed, look for `USB_PERM_DENIED` in
    `/sdcard/Download/hidock_job_ticks.txt` and a **HiDock needs USB OK**
    notification. Unplug/replug can also re-trigger attach flows. See
-   [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
+   [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot)
+   and the [full Termux:API patch recipe](docs/termux-api-usb-persist.md).
 6. Confirm Android still has the persisted job owned by Termux:API:
    ```bash
    adb shell dumpsys jobscheduler | grep -A 40 'com.termux.api'
@@ -236,12 +237,12 @@ Until you tap **OK** again, the job still runs but `termux-usb -e` returns
 Unplug/replug after reboot can also re-trigger Android USB attach flows
 (and another permission dialog).
 
-True hands-off ingest after reboot is **future work**, out of scope here:
-
-- an Accessibility service that auto-taps the USB OK dialog, or
-- a custom Termux:API build with a `device_filter` for vendor-id `0x3887`
-  product-id `0x2041` (HiDock P1 mini) plus `directBootAware` so the grant
-  can attach before first unlock.
+True hands-off ingest after reboot needs a remembered grant on
+`com.termux.api` (stock Termux:API cannot persist). The
+[full Termux:API patch recipe](docs/termux-api-usb-persist.md) covers the
+`device_filter` (P1 mini vendor-id `14471` / `0x3887`, product-id `8257` /
+`0x2041`) plus `directBootAware`. An Accessibility auto-tap of the USB
+OK dialog is a separate workaround.
 
 Do not treat a persisted JobScheduler job as a USB grant. The supported
 scheduler is still JobScheduler (`setup-jobscheduler.sh`); cron is
@@ -323,6 +324,7 @@ see a different name and can sync the previous one).
 ```
 hidock-android-sync/
 ├── README.md
+├── docs/termux-api-usb-persist.md  # custom Termux:API USB grant persist recipe
 ├── LICENSE
 ├── config.example.env       # default config; user copies to ~/.config/hidock-sync/config
 ├── hidock_sync.py           # main worker, run via `termux-usb -e`
