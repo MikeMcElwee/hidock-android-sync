@@ -161,13 +161,20 @@ a Termux session (the failure mode of Termux:Boot + crond).
    ```
    A new `JOB_FIRE …` line whose timestamp (and `boot_id=`) is after the reboot
    proves the job ran without anyone opening Termux.
-5. Confirm Android still has the persisted job owned by Termux:API:
+5. After `JOB_FIRE` is proved, check that same tick's sync log
+   (`~/.config/hidock-sync/cron_ticks.log`). If it logged
+   `no USB device attached, skipping` or `Permission denied`, plug the HiDock
+   and grant USB once (`bash run_sync.sh request`, or `termux-usb -r` on the
+   `/dev/bus/usb/X/Y` path) and tap **OK**. JobScheduler itself is fine;
+   Android wiped the USB grant on cold boot. See
+   [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
+6. Confirm Android still has the persisted job owned by Termux:API:
    ```bash
    adb shell dumpsys jobscheduler | grep -A 40 'com.termux.api'
    ```
    Look for job id **834001** and a persisted `JobSchedulerAPI$JobSchedulerService`
    entry. `grep 834001` on that dump is usually enough.
-6. If there is no post-reboot tick: Settings → Apps → **Termux:API** and
+7. If there is no post-reboot tick: Settings → Apps → **Termux:API** and
    **Termux** → Battery → **Unrestricted**, re-run `bash setup-jobscheduler.sh`,
    and repeat the reboot. Do not "fix" this by going back to `setup-cron.sh`.
 
@@ -189,11 +196,38 @@ CRON_INTERVAL_MIN=30                 # setup-jobscheduler.sh → --period-ms (mi
 
 ### "no USB device attached, skipping" in the tick log
 Plug in HiDock and reseat. `termux-usb -l` should print the `/dev/bus/usb/X/Y` path.
+After a cold boot this can also be a wiped USB grant even though the dock is
+plugged in — see [USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
 
 ### "Permission denied" from `termux-usb`
-You haven't granted the persistent permission yet. Run `bash run_sync.sh request`
-once — Android will pop an "Allow Termux:API to access HiDock P1 mini?" dialog. Tap
-**OK**. The grant is per device; survive reboots.
+You haven't granted the USB permission yet (or Android wiped it after a cold
+boot). Run `bash run_sync.sh request` once — Android will pop an "Allow
+Termux:API to access HiDock P1 mini?" dialog. Tap **OK**. The grant is per
+device. It does **not** survive a cold boot — see
+[USB permission wiped after cold boot](#usb-permission-wiped-after-cold-boot).
+
+### USB permission wiped after cold boot
+Phone-proved: JobScheduler job **834001** survives reboot and fires
+(`JOB_FIRE` in `/sdcard/Download/hidock_job_ticks.txt`). JobScheduler itself
+is fine.
+
+Android wipes Termux:API's `termux-usb` device permission after a cold boot.
+Until you grant it again, the job still runs but ingest skips with
+`no USB device attached, skipping` or `Permission denied` from `termux-usb`.
+Hands-off ingest after reboot still needs one interactive grant per boot:
+
+```bash
+bash run_sync.sh request
+# or, on the path from termux-usb -l:
+termux-usb -r /dev/bus/usb/X/Y
+```
+
+Tap **OK** on the system dialog (HiDock must be plugged in). Same flow as
+["Permission denied" from `termux-usb`](#permission-denied-from-termux-usb).
+
+There is no automatic persist yet. Do not treat a re-scheduled JobScheduler
+job as a USB grant, and do not expect `termux-usb -r` to stay granted across
+a cold boot.
 
 ### HiNotes app holds the device, sync fails
 The HiNotes app auto-attaches to the HiDock on USB-attach and locks it. You have three
